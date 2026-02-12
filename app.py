@@ -14,11 +14,9 @@ st.title("🛒 SmartStore AI - Gemini AI Simulation")
 # Load Gemini API key from Streamlit Secrets
 # -------------------------------
 # Load Gemini API key from Streamlit Secrets (safe fallback)
-try:
-    GEMINI_API_KEY = st.secrets["api_key"]
-except (KeyError, AttributeError):
-    GEMINI_API_KEY = None
-    st.warning("⚠️ Gemini API key not found. AI will fallback to default logic.")
+# Load Gemini API key from Streamlit Secrets (safe fallback)
+GEMINI_API_KEY = st.secrets.get("api_key", None)
+
 
 # -------------------------------
 # Initialize store in session state
@@ -170,4 +168,5 @@ st.subheader("📝 Action Log")
 log = store.get("log", [])
 for entry in log[-10:][::-1]:
     st.write(f"- {entry}")
+
 
