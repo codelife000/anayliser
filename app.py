@@ -1,68 +1,102 @@
-# app.py (Fully Fixed Advanced SmartStore App)
+# app.py
 import streamlit as st
-import requests
-import threading
-from fastapi import FastAPI
-import uvicorn
 import random
-import time
+import requests
+from streamlit_autorefresh import st_autorefresh
 
 # -------------------------------
-# Backend (FastAPI)
+# Streamlit page config
 # -------------------------------
-app = FastAPI()
+st.set_page_config(page_title="🛒 SmartStore AI", layout="wide")
+st.title("🛒 SmartStore AI - Gemini AI Simulation")
 
-# Initialize store with log to avoid KeyError
-store = {
-    "shelves": {
-        "A": {"status": "full", "empty_minutes": 0, "traffic": "high"},
-        "B": {"status": "full", "empty_minutes": 0, "traffic": "low"},
-        "C": {"status": "full", "empty_minutes": 0, "traffic": "medium"},
-    },
-    "robot_position": "Dock",
-    "tasks_completed": 0,
-    "log": [],
-}
+# -------------------------------
+# Load Gemini API key from Streamlit Secrets
+# -------------------------------
+# Load Gemini API key from Streamlit Secrets (safe fallback)
+try:
+    GEMINI_API_KEY = st.secrets["api_key"]
+except (KeyError, AttributeError):
+    GEMINI_API_KEY = None
+    st.warning("⚠️ Gemini API key not found. AI will fallback to default logic.")
 
-@app.get("/state")
-def get_state():
-    return {"store": store}
+# -------------------------------
+# Initialize store in session state
+# -------------------------------
+if "store" not in st.session_state:
+    st.session_state.store = {
+        "shelves": {
+            "A": {"status": "full", "empty_minutes": 0, "traffic": "high"},
+            "B": {"status": "full", "empty_minutes": 0, "traffic": "low"},
+            "C": {"status": "full", "empty_minutes": 0, "traffic": "medium"},
+        },
+        "robot_position": "Dock",
+        "tasks_completed": 0,
+        "log": [],
+    }
 
-@app.post("/simulate_empty")
+store = st.session_state.store
+
+# -------------------------------
+# Gemini AI Decision Function
+# -------------------------------
+def ai_decide(empty_shelves):
+    """Decide which shelf to restock."""
+    # Fallback if API key missing
+    if not GEMINI_API_KEY:
+        return max(empty_shelves, key=lambda x: empty_shelves[x]["empty_minutes"])
+
+    prompt = "Shelves data:\n"
+    for name, data in empty_shelves.items():
+        prompt += f"Shelf {name}: status={data['status']}, empty_minutes={data['empty_minutes']}, traffic={data['traffic']}\n"
+    prompt += "Which shelf should the robot restock first? Return only the shelf letter."
+
+    headers = {
+        "Authorization": f"Bearer {GEMINI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "gemini-1.5",
+        "prompt": prompt,
+        "max_tokens": 5
+    }
+
+    try:
+        response = requests.post("https://api.gemini.com/v1/completions", json=payload, headers=headers, timeout=10)
+        result = response.json()
+        decision = result.get("choices", [{}])[0].get("text", "").strip().upper()
+        # Validate the decision
+        if decision not in empty_shelves:
+            decision = max(empty_shelves, key=lambda x: empty_shelves[x]["empty_minutes"])
+        return decision
+    except Exception as e:
+        st.error(f"AI request failed: {e}. Using fallback decision.")
+        return max(empty_shelves, key=lambda x: empty_shelves[x]["empty_minutes"])
+
+# -------------------------------
+# Helper Functions
+# -------------------------------
 def simulate_empty():
+    """Randomly make a shelf empty."""
     shelf = random.choice(list(store["shelves"].keys()))
     store["shelves"][shelf]["status"] = "empty"
     store["shelves"][shelf]["empty_minutes"] = random.randint(1, 15)
     store["log"].append(f"Shelf {shelf} became empty")
-    return {"message": f"Shelf {shelf} is now empty"}
+    st.success(f"Shelf {shelf} is now empty")
 
-@app.post("/decide")
 def decide():
+    """Ask AI to decide which shelf to restock."""
     empty_shelves = {k: v for k, v in store["shelves"].items() if v["status"] == "empty"}
     if not empty_shelves:
-        return {"message": "No empty shelves"}
-    decision = max(empty_shelves, key=lambda x: empty_shelves[x]["empty_minutes"])
+        st.warning("No empty shelves to restock")
+        return
+    decision = ai_decide(empty_shelves)
     store["robot_position"] = decision
     store["shelves"][decision]["status"] = "full"
     store["tasks_completed"] += 1
-    store["log"].append(f"Robot restocked Shelf {decision}")
-    return {"decision": decision}
-
-# -------------------------------
-# Run FastAPI in Thread
-# -------------------------------
-def run_backend():
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-threading.Thread(target=run_backend, daemon=True).start()
-
-# -------------------------------
-# Frontend (Streamlit)
-# -------------------------------
-BACKEND_URL = "http://localhost:8000"
-
-st.set_page_config(page_title="🛒 SmartStore AI", layout="wide")
-st.title("🛒 SmartStore AI - Advanced Retail Simulation")
+    store["log"].append(f"Robot restocked Shelf {decision} (AI decision)")
+    st.success(f"🤖 Robot is restocking Shelf {decision} (AI decision)")
 
 # -------------------------------
 # Sidebar Controls
@@ -70,60 +104,47 @@ st.title("🛒 SmartStore AI - Advanced Retail Simulation")
 st.sidebar.header("⚙️ Controls")
 auto_simulate = st.sidebar.checkbox("Auto-Simulate Empty Shelves")
 simulate_interval = st.sidebar.slider("Simulation Interval (seconds)", 1, 10, 3)
+
 if st.sidebar.button("Reset Store"):
-    # Reset the store to initial state
-    requests.post(f"{BACKEND_URL}/simulate_empty")  # simulate one empty shelf as a simple reset trick
+    st.session_state.store = {
+        "shelves": {
+            "A": {"status": "full", "empty_minutes": 0, "traffic": "high"},
+            "B": {"status": "full", "empty_minutes": 0, "traffic": "low"},
+            "C": {"status": "full", "empty_minutes": 0, "traffic": "medium"},
+        },
+        "robot_position": "Dock",
+        "tasks_completed": 0,
+        "log": [],
+    }
     st.experimental_rerun()
 
 # -------------------------------
-# Fetch Store State
+# Buttons
 # -------------------------------
-try:
-    state = requests.get(f"{BACKEND_URL}/state").json()["store"]
-except:
-    st.error("Backend not running yet. Please wait a few seconds and refresh.")
-    st.stop()
-
-# -------------------------------
-# Simulate Shelf Empty
-# -------------------------------
-st.subheader("1️⃣ Simulate Shelf Activity")
 col1, col2 = st.columns(2)
-
 with col1:
     if st.button("Simulate Shelf Becoming Empty"):
-        res = requests.post(f"{BACKEND_URL}/simulate_empty")
-        st.success(res.json()["message"])
-        state = requests.get(f"{BACKEND_URL}/state").json()["store"]
-
+        simulate_empty()
 with col2:
     if st.button("Ask Robot to Restock"):
-        res = requests.post(f"{BACKEND_URL}/decide")
-        result = res.json()
-        if "decision" in result:
-            st.success(f"🤖 Robot is restocking Shelf {result['decision']}")
-        else:
-            st.warning(result.get("message", "No empty shelves"))
-        state = requests.get(f"{BACKEND_URL}/state").json()["store"]
+        decide()
 
 # -------------------------------
-# Auto Simulation
+# Auto-Simulation (non-blocking)
 # -------------------------------
 if auto_simulate:
-    while True:
-        requests.post(f"{BACKEND_URL}/simulate_empty")
-        time.sleep(simulate_interval)
-        st.experimental_rerun()
+    st_autorefresh(interval=simulate_interval*1000, limit=None, key="auto_sim")
+    simulate_empty()
 
 # -------------------------------
 # Shelf Grid Display
 # -------------------------------
 st.subheader("📦 Shelf Status")
-cols = st.columns(len(state["shelves"]))
-for i, (name, data) in enumerate(state["shelves"].items()):
+cols = st.columns(len(store["shelves"]))
+for name, data in store["shelves"].items():
     color = "🟢 Full" if data["status"] == "full" else "🔴 Empty"
-    robot_here = "🤖" if state["robot_position"] == name else ""
-    with cols[i]:
+    robot_here = "🤖" if store["robot_position"] == name else ""
+    with cols[list(store["shelves"].keys()).index(name)]:
         st.markdown(f"### Shelf {name} {robot_here}")
         st.write(f"**Status:** {color}")
         st.write(f"**Traffic:** {data['traffic']}")
@@ -135,17 +156,17 @@ for i, (name, data) in enumerate(state["shelves"].items()):
 st.subheader("📊 Metrics")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("Total Restocking Tasks", state["tasks_completed"])
+    st.metric("Total Restocking Tasks", store["tasks_completed"])
 with col2:
-    empty_count = sum(1 for s in state["shelves"].values() if s["status"]=="empty")
+    empty_count = sum(1 for s in store["shelves"].values() if s["status"]=="empty")
     st.metric("Empty Shelves", empty_count)
 with col3:
-    st.metric("Robot Position", state["robot_position"])
+    st.metric("Robot Position", store["robot_position"])
 
 # -------------------------------
 # Action Log
 # -------------------------------
 st.subheader("📝 Action Log")
-log = state.get("log", [])
+log = store.get("log", [])
 for entry in log[-10:][::-1]:
     st.write(f"- {entry}")
