@@ -1,6 +1,5 @@
-pandas
-numpy
 streamlit
+fastapi
+uvicorn
 requests
-
-
+pydantic
