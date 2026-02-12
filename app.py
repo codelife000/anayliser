@@ -17,6 +17,8 @@ st.title("🛒 SmartStore AI - Gemini AI Simulation")
 try:
     GEMINI_API_KEY = st.secrets["api_key"]
 except (KeyError, AttributeError):
+    GEMINI_API_KEY = None
+    st.warning("⚠️ Gemini API key not found. AI will fallback to default logic.")
 
 # -------------------------------
 # Initialize store in session state
